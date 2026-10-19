@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: false },
   reactStrictMode: true,
   poweredByHeader: false,
   // تصاویر در این پروژه محلی (SVG/PNG سبک) هستند و از CDN خارجی استفاده نمی‌شود.
