@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0f766e;
+  --color-primary-50: #f0fdfa;
+  --color-primary-100: #ccfbf1;
+  --color-primary-600: #0d9488;
+  --color-primary-700: #0f766e;
+  --color-primary-800: #115e59;
+  --color-accent: #f59e0b;
+  --color-accent-50: #fffbeb;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-border: #e2e8f0;
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --font-sans: "Vazirmatn", system-ui, -apple-system, sans-serif;
+}
+
+/* Vazirmatn local */
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/vazirmatn-latin-400.woff2") format("woff2"), url("./fonts/vazirmatn-arabic-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD, U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/vazirmatn-latin-500.woff2") format("woff2"), url("./fonts/vazirmatn-arabic-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/vazirmatn-latin-600.woff2") format("woff2"), url("./fonts/vazirmatn-arabic-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/vazirmatn-latin-700.woff2") format("woff2"), url("./fonts/vazirmatn-arabic-700.woff2") format("woff2");
+}
+
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  background: #f8fafc;
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* RTL helpers */
+[dir="rtl"] { text-align: right; }
+
+/* Focus */
+:focus-visible { outline: 2px solid var(--color-primary-600); outline-offset: 2px; }
+
+/* Utility for card */
+.card { background: white; border: 1px solid var(--color-border); border-radius: var(--radius-xl); }

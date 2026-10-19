@@ -1,0 +1,45 @@
+name: pet-insurance
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: petins
+      POSTGRES_PASSWORD: petins_dev_password
+      POSTGRES_DB: pet_insurance_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U petins"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://petins:petins_dev_password@db:5432/pet_insurance_dev?schema=public
+      AUTH_SECRET: replace-me-generate-with-node-crypto-randomBytes-48-base64url
+      FILE_SIGNING_SECRET: replace-me-another-random-48-base64url
+      APP_URL: http://localhost:3000
+      NODE_ENV: production
+      NEXT_PUBLIC_DEMO_MODE: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - uploads:/app/storage/uploads
+    command: >-
+      sh -c "npx prisma migrate deploy && npm start"
+
+volumes:
+  pgdata:
+  uploads:

@@ -1,0 +1,706 @@
+// ---------------------------------------------------------------------------
+// بیمه دامپزشکی سگ و گربه — مدل داده
+// یکای پول در همه‌جا: ریالِ عدد صحیح (Int). هرگز float استفاده نشود.
+// نرخ‌ها به صورت basis-point (bps) ذخیره می‌شوند: 7000bps = 70%
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================ نقش‌ها و کاربران ============================
+
+enum Role {
+  OWNER // صاحب حیوان
+  CLINIC // کاربر کلینیک طرف قرارداد
+  REVIEWER // کارشناس عملیات بیمه
+  ADMIN // مدیر سامانه
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  INVITED
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String?    @unique
+  phone        String?    @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         Role       @default(OWNER)
+  status       UserStatus @default(ACTIVE)
+
+  // فقط کاربران کلینیک
+  clinicId String?
+  clinic   Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  // امنیت نشست / قفل حساب
+  tokenVersion        Int       @default(0)
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  mustChangePassword  Boolean   @default(false)
+
+  isDemo    Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  pets                 Pet[]
+  policies             Policy[]
+  uploadedFiles        Attachment[]         @relation("AttachmentUploader")
+  createdRequests      TreatmentRequest[]   @relation("RequestCreator")
+  ownedRequests        TreatmentRequest[]   @relation("RequestOwner")
+  assignedRequests     TreatmentRequest[]   @relation("RequestReviewer")
+  reviewDecisions      ReviewDecision[]
+  settlements          Settlement[]         @relation("SettlementCreator")
+  statusEvents         RequestStatusEvent[]
+  auditEvents          AuditEvent[]
+  resetTokens          PasswordResetToken[]
+  notifications        Notification[]
+  pricingAssumptions   PricingAssumption[]
+  pricingRuns          PricingRun[]
+  approvedPlanVersions PlanVersion[]        @relation("PlanVersionApprover")
+
+  @@index([role])
+  @@index([clinicId])
+  @@map("users")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// ============================ کلینیک‌ها ============================
+
+enum ContractStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+  TERMINATED
+}
+
+model Clinic {
+  id             String         @id @default(cuid())
+  publicId       String         @unique // شناسهٔ قابل نمایش (غیرقابل حدس)
+  slug           String         @unique
+  name           String
+  city           String
+  district       String?
+  address        String
+  phone          String
+  email          String?
+  website        String?
+  description    String?
+  // فقط برای نمایش در صورت پیکربندی نقشهٔ واقعی؛ در نسخهٔ دمو استفاده نمی‌شود
+  latitude       Float?
+  longitude      Float?
+  openingHours   Json? // { "sat": "9-21", ... } یا متن آزاد
+  contractStatus ContractStatus @default(PENDING)
+  contractStart  DateTime?
+  contractEnd    DateTime?
+  isDemo         Boolean        @default(true)
+  deletedAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  users       User[]
+  services    ClinicService[]
+  contracts   ClinicContract[]
+  requests    TreatmentRequest[]
+  settlements Settlement[]
+
+  @@index([city])
+  @@index([contractStatus])
+  @@map("clinics")
+}
+
+model ClinicContract {
+  id        String         @id @default(cuid())
+  clinicId  String
+  clinic    Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  status    ContractStatus
+  startDate DateTime?
+  endDate   DateTime?
+  note      String?
+  createdAt DateTime       @default(now())
+
+  @@index([clinicId])
+  @@map("clinic_contracts")
+}
+
+// ============================ گروه‌های خدمت ============================
+
+// v1: ویزیت، آزمایش، تصویربرداری، دارو، جراحی/بستری، پیشگیرانه، اورژانس، تخصصی
+model ServiceGroup {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  nameFa      String
+  description String?
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+
+  clinicServices     ClinicService[]
+  coverageRules      CoverageRule[]
+  serviceLines       ServiceLine[]
+  pricingAssumptions PricingAssumption[]
+
+  @@map("service_groups")
+}
+
+model ClinicService {
+  id             String       @id @default(cuid())
+  clinicId       String
+  clinic         Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  serviceGroupId String
+  serviceGroup   ServiceGroup @relation(fields: [serviceGroupId], references: [id], onDelete: Cascade)
+  note           String?
+  isAvailable    Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  @@unique([clinicId, serviceGroupId])
+  @@index([serviceGroupId])
+  @@map("clinic_services")
+}
+
+// ============================ حیوانات ============================
+
+enum Species {
+  DOG
+  CAT
+}
+
+enum PetSex {
+  MALE
+  FEMALE
+  UNKNOWN
+}
+
+model Pet {
+  id              String    @id @default(cuid())
+  publicId        String    @unique
+  ownerId         String
+  owner           User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name            String
+  species         Species
+  breed           String?
+  sex             PetSex    @default(UNKNOWN)
+  birthDate       DateTime?
+  // در صورت نبود تاریخ تولد دقیق
+  approxAgeMonths Int?
+  microchipCode   String?
+  weightKg        Float?
+  sterilized      Boolean?
+  notes           String?
+  isDemo          Boolean   @default(false)
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  policies Policy[]
+  requests TreatmentRequest[]
+
+  @@index([ownerId])
+  @@index([species])
+  @@map("pets")
+}
+
+// ============================ طرح‌ها و نسخهٔ شرایط ============================
+
+model Plan {
+  id        String   @id @default(cuid())
+  code      String   @unique // BASIC | STANDARD | COMPLETE
+  name      String // پایه / استاندارد / کامل
+  tagline   String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  isDemo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  versions PlanVersion[]
+  policies Policy[]
+
+  @@map("plans")
+}
+
+// وضعیت انتشار: فقط APPROVED با isPublished=true برای نمایش عمومی به‌عنوان شرایط «منتشرشده»
+enum TermsStatus {
+  DRAFT
+  PROPOSED
+  PENDING_APPROVAL
+  APPROVED
+  ARCHIVED
+}
+
+// نوع فرانشیز؛ UNSPECIFIED یعنی قاعده نهایی وجود ندارد ⇒ محاسبه در حالت «نامشخص/نیازمند بررسی»
+enum DeductibleType {
+  NONE
+  FIXED // مبلغ ثابت به ریال
+  PERCENT // درصد از مبلغ واجد شرایط (bps)
+  UNSPECIFIED
+}
+
+enum LimitPeriod {
+  ANNUAL
+  PER_INCIDENT
+  LIFETIME
+}
+
+model PlanVersion {
+  id          String      @id @default(cuid())
+  planId      String
+  plan        Plan        @relation(fields: [planId], references: [id], onDelete: Cascade)
+  versionCode String      @unique // نمونه: PV-BASIC-1404-01
+  status      TermsStatus @default(DRAFT)
+  isPublished Boolean     @default(false)
+  isDemo      Boolean     @default(true)
+
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+
+  // سقف‌ها (ریال)؛ null = «تعیین نشده» (هرگز صفر فرض نمی‌شود)
+  annualLimitRial      Int?
+  perIncidentLimitRial Int?
+  lifetimeLimitRial    Int?
+
+  // فرانشیز / سهم مالک
+  deductibleType      DeductibleType @default(UNSPECIFIED)
+  deductibleValue     Int? // ریال (FIXED) یا bps (PERCENT)
+  ownerCoinsuranceBps Int? // سهم مشترک مالک پس از فرانشیز (bps)
+
+  // نرخ بازپرداخت (bps روی مبلغ واجد شرایط)
+  reimbursementRateBps Int?
+
+  // دورهٔ انتظار (روز) — null یعنی تعیین نشده
+  waitingPeriodDays Int?
+  minAgeMonths      Int?
+  maxAgeMonths      Int?
+  eligibleSpecies   Species[]
+
+  termsMarkdown  String?
+  notes          String?
+  // برچسب صریح «نمونهٔ آموزشی / تأییدنشده»
+  isIllustrative Boolean @default(true)
+
+  approvedById String?
+  approvedBy   User?     @relation("PlanVersionApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime?
+  publishedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  coverageRules CoverageRule[]
+  exclusions    PlanVersionExclusion[]
+  policies      Policy[]
+
+  @@index([planId, status])
+  @@map("plan_versions")
+}
+
+enum CoverageStatus {
+  COVERED
+  NOT_COVERED
+  UNKNOWN // نامشخص / نیازمند تأیید
+}
+
+model CoverageRule {
+  id                   String         @id @default(cuid())
+  planVersionId        String
+  planVersion          PlanVersion    @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+  serviceGroupId       String
+  serviceGroup         ServiceGroup   @relation(fields: [serviceGroupId], references: [id], onDelete: Cascade)
+  coverageStatus       CoverageStatus @default(UNKNOWN)
+  // سقف اختصاصی این گروه (ریال)؛ null = نامشخص
+  limitRial            Int?
+  limitPeriod          LimitPeriod?
+  // نرخ بازپرداخت اختصاصی (bps)؛ null = استفاده از نرخ نسخه
+  reimbursementRateBps Int?
+  note                 String?
+
+  @@unique([planVersionId, serviceGroupId])
+  @@index([serviceGroupId])
+  @@map("coverage_rules")
+}
+
+model PlanVersionExclusion {
+  id            String      @id @default(cuid())
+  planVersionId String
+  planVersion   PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  sortOrder     Int         @default(0)
+
+  @@index([planVersionId])
+  @@map("plan_version_exclusions")
+}
+
+// ============================ بیمه‌نامه ============================
+
+enum PolicyStatus {
+  PENDING // درخواست صدور ثبت شده، منتظر بررسی/تأیید
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  CANCELLED
+  REJECTED
+}
+
+model Policy {
+  id            String      @id @default(cuid())
+  publicId      String      @unique // شمارهٔ بیمه‌نامهٔ قابل نمایش
+  petId         String
+  pet           Pet         @relation(fields: [petId], references: [id], onDelete: Cascade)
+  ownerId       String
+  owner         User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  planId        String
+  plan          Plan        @relation(fields: [planId], references: [id], onDelete: Restrict)
+  planVersionId String
+  planVersion   PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
+
+  status      PolicyStatus @default(PENDING)
+  startDate   DateTime
+  endDate     DateTime
+  // حق بیمهٔ نمونه (ریال) — فقط برای سناریوی دمو/آموزشی
+  premiumRial Int?
+  isDemo      Boolean      @default(true)
+  cancelledAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  requests TreatmentRequest[]
+
+  @@index([petId])
+  @@index([ownerId])
+  @@index([status])
+  @@map("policies")
+}
+
+// ============================ درخواست درمان / صورتحساب ============================
+
+enum RequestStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  NEEDS_CORRECTION
+  RESUBMITTED
+  APPROVED
+  REJECTED
+  PENDING_SETTLEMENT
+  SETTLED_SIMULATED
+  CANCELLED
+}
+
+model TreatmentRequest {
+  id           String @id @default(cuid())
+  trackingCode String @unique // نمونه: TR-8F3K2M9Q
+  clinicId     String
+  clinic       Clinic @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  petId        String
+  pet          Pet    @relation(fields: [petId], references: [id], onDelete: Restrict)
+  policyId     String
+  policy       Policy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  ownerId      String
+  // مالکِ حیوان در زمان ثبت (برای کنترل دسترسی و جلوگیری از دستکاری بعدی)
+  owner        User   @relation("RequestOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  createdById        String
+  createdBy          User    @relation("RequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assignedReviewerId String?
+  assignedReviewer   User?   @relation("RequestReviewer", fields: [assignedReviewerId], references: [id], onDelete: SetNull)
+
+  serviceDate        DateTime
+  invoiceNumber      String?
+  currency           String   @default("IRR")
+  totalAmountRial    Int      @default(0)
+  // مبالغ پس از بررسی انسانی؛ null = هنوز تعیین نشده
+  eligibleAmountRial Int?
+  insurerShareRial   Int?
+  ownerShareRial     Int?
+
+  status  RequestStatus @default(DRAFT)
+  // قفل خوش‌بینانه برای جلوگیری از نوشتن همزمان
+  version Int           @default(1)
+
+  clinicalSummary  String?
+  rejectionReason  String?
+  correctionReason String?
+
+  // جلوگیری از ارسال تکراری: کلید ایدمپوتنسی اختیاری از سمت کلاینت
+  idempotencyKey String? @unique
+
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  decidedAt   DateTime?
+  settledAt   DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lines        ServiceLine[]
+  attachments  Attachment[]
+  decisions    ReviewDecision[]
+  statusEvents RequestStatusEvent[]
+  settlement   Settlement?
+
+  @@index([clinicId, status])
+  @@index([ownerId, status])
+  @@index([status])
+  @@index([petId])
+  @@map("treatment_requests")
+}
+
+enum LineCoverageStatus {
+  UNKNOWN // نامشخص / نیازمند بررسی
+  ELIGIBLE
+  NOT_ELIGIBLE
+}
+
+model ServiceLine {
+  id             String           @id @default(cuid())
+  requestId      String
+  request        TreatmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  serviceGroupId String
+  serviceGroup   ServiceGroup     @relation(fields: [serviceGroupId], references: [id], onDelete: Restrict)
+  description    String
+  quantity       Int              @default(1)
+  unitAmountRial Int
+  lineTotalRial  Int
+
+  coverageStatus     LineCoverageStatus @default(UNKNOWN)
+  eligibleAmountRial Int?
+  insurerShareRial   Int?
+  ownerShareRial     Int?
+  decisionReason     String?
+  decidedById        String?
+  decidedAt          DateTime?
+  sortOrder          Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([requestId])
+  @@map("service_lines")
+}
+
+// ============================ پیوست‌ها (خصوصی) ============================
+
+enum AttachmentDocType {
+  INVOICE
+  TREATMENT_REPORT
+  LAB_RESULT
+  PRESCRIPTION
+  IMAGING
+  OTHER
+}
+
+enum AttachmentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model Attachment {
+  id           String            @id @default(cuid())
+  requestId    String
+  request      TreatmentRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy   User              @relation("AttachmentUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  docType      AttachmentDocType @default(OTHER)
+  // کلید ذخیرهٔ خصوصی — هرگز مستقیماً در URL عمومی استفاده نمی‌شود
+  storageKey   String            @unique
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  checksum     String
+  status       AttachmentStatus  @default(PENDING)
+  note         String?
+  deletedAt    DateTime?
+  createdAt    DateTime          @default(now())
+
+  @@index([requestId])
+  @@map("attachments")
+}
+
+// ============================ تصمیم کارشناسی ============================
+
+enum DecisionType {
+  APPROVE
+  REJECT
+  REQUEST_CORRECTION
+  REOPENED
+}
+
+model ReviewDecision {
+  id                 String           @id @default(cuid())
+  requestId          String
+  request            TreatmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  reviewerId         String
+  reviewer           User             @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+  decision           DecisionType
+  // دلیل: برای رد/اصلاح/کاهش سهم اجباری است
+  reason             String
+  // مقادیر قبل و بعد (خلاصهٔ امن؛ بدون دادهٔ حساس غیرضروری)
+  before             Json?
+  after              Json?
+  eligibleAmountRial Int?
+  insurerShareRial   Int?
+  ownerShareRial     Int?
+  createdAt          DateTime         @default(now())
+
+  @@index([requestId])
+  @@index([reviewerId])
+  @@map("review_decisions")
+}
+
+// ============================ تسویه ============================
+
+// در این MVP فقط SIMULATED فعال است. REAL عمداً پیاده‌سازی نشده است.
+enum SettlementMode {
+  SIMULATED
+  REAL
+}
+
+model Settlement {
+  id          String           @id @default(cuid())
+  requestId   String           @unique // یک تسویه برای هر پرونده ⇒ جلوگیری از ثبت دوباره
+  request     TreatmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  clinicId    String
+  clinic      Clinic           @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  amountRial  Int
+  mode        SettlementMode   @default(SIMULATED)
+  reference   String? // شمارهٔ پیگیری نمایشی (دمو)
+  settledAt   DateTime
+  note        String?
+  createdById String
+  createdBy   User             @relation("SettlementCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime         @default(now())
+
+  @@index([clinicId])
+  @@map("settlements")
+}
+
+// ============================ تاریخچه و ممیزی ============================
+
+enum Audience {
+  ALL
+  STAFF_ONLY
+}
+
+model RequestStatusEvent {
+  id         String           @id @default(cuid())
+  requestId  String
+  request    TreatmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fromStatus RequestStatus?
+  toStatus   RequestStatus
+  actorId    String?
+  actor      User?            @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorRole  Role?
+  note       String?
+  audience   Audience         @default(ALL)
+  createdAt  DateTime         @default(now())
+
+  @@index([requestId, createdAt])
+  @@map("request_status_events")
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorRole  Role?
+  action     String // مثال: REQUEST_SUBMIT, SETTLEMENT_CREATE_DENIED
+  entityType String
+  entityId   String?
+  result     String // SUCCESS | DENIED | ERROR
+  summary    String
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_events")
+}
+
+// ============================ آگاه‌سازی درون‌برنامه‌ای ============================
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  linkUrl   String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+// ============================ قیمت‌گذاری داخلی (SandBox) ============================
+
+enum AssumptionStatus {
+  DRAFT
+  PROPOSED
+  APPROVED
+}
+
+model PricingAssumption {
+  id                 String           @id @default(cuid())
+  code               String
+  name               String
+  species            Species
+  serviceGroupId     String?
+  serviceGroup       ServiceGroup?    @relation(fields: [serviceGroupId], references: [id], onDelete: SetNull)
+  avgCostRial        Int // میانگین هزینهٔ هر بار خدمت (ریال)
+  annualFrequency    Float // فراوانی موردانتظار در سال (مثلاً ۰٫۴)
+  insurerPayShareBps Int // سهم پرداختی مفروض بیمه (bps)
+  source             String // منبع برآورد
+  estimatedAt        DateTime
+  status             AssumptionStatus @default(DRAFT)
+  notes              String?
+  createdById        String?
+  createdBy          User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([species, status])
+  @@map("pricing_assumptions")
+}
+
+model PricingRun {
+  id          String   @id @default(cuid())
+  name        String
+  species     Species
+  // ورودی‌های فرمول: L, F, R, C, V(bps), Q(bps)
+  inputs      Json
+  outputs     Json
+  notes       String?
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([species])
+  @@map("pricing_runs")
+}

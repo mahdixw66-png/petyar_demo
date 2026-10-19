@@ -1,0 +1,12 @@
+{
+  "name": "پت‌یار — بیمه دامپزشکی سگ و گربه",
+  "short_name": "پت‌یار",
+  "description": "پلتفرم بیمه دامپزشکی سگ و گربه — نسخه دمو",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f766e",
+  "theme_color": "#0f766e",
+  "lang": "fa",
+  "dir": "rtl",
+  "icons": []
+}

@@ -1,0 +1,17 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "پت‌یار — بیمه دامپزشکی API", "version": "1.0.0", "description": "نسخهٔ v1 — تمام مبالغ نمونه و تسویه فقط SIMULATED" },
+  "servers": [{ "url": "http://localhost:3000/api/v1" }],
+  "paths": {
+    "/auth/register": { "post": { "summary": "ثبت‌نام مالک", "requestBody": { "content": { "application/json": { "schema": { "type": "object" } } } }, "responses": { "201": { "description": "created" } } } },
+    "/auth/login": { "post": { "summary": "ورود", "responses": { "200": { "description": "ok" } } } },
+    "/clinics": { "get": { "summary": "فهرست کلینیک‌ها", "parameters": [{ "name": "q", "in": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } } },
+    "/plans": { "get": { "summary": "طرح‌ها", "responses": { "200": { "description": "ok" } } } },
+    "/pets": { "get": { "summary": "حیوانات مالک" }, "post": { "summary": "ایجاد حیوان" } },
+    "/requests": { "get": { "summary": "فهرست درخواست‌ها" }, "post": { "summary": "ایجاد پیش‌نویس" } },
+    "/requests/{id}/submit": { "post": { "summary": "ارسال" } },
+    "/requests/{id}/claim": { "post": { "summary": "شروع بررسی" } },
+    "/requests/{id}/decide": { "post": { "summary": "تصمیم کارشناس" } },
+    "/requests/{id}/settle": { "post": { "summary": "ثبت تسویه آزمایشی" } }
+  }
+}
